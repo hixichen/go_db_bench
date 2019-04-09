@@ -158,8 +158,8 @@ func extractConfig() (config pgx.ConnPoolConfig, err error) {
 		config.Host = os.Getenv("POSTGRES_SERVICE_HOST")
 	}
 
-	config.Port = 30032
-
+	port, _ := strconv.ParseUint(os.Getenv("POSTGRES_SERVICE_PORT"), 10, 16)
+	config.Port = uint16(port)
 	if config.User == "" {
 		config.User = "postgres"
 	}

@@ -8,20 +8,24 @@ statements.
 
 ## Configuration
 
-go_db_bench reads its configuration from the environment:
-
-    PGHOST - defaults to localhost
-    PGUSER - default to OS user
-    PGPASSWORD - defaults to empty string
-    PGDATABASE - defaults to go_db_bench
+go_db_bench reads its configuration from the environment:  
+    POSTGRES_SERVICE_HOST - defaults to empty  
+    POSTGRES_SERVICE_PORT - 5432  
+    PGPASSWORD - defaults to empty string  
+    PGDATABASE - defaults to go_db_bench  
 
 ## Core Benchmarks
 
 go_db_bench includes tests selecting one value, one row, and multiple rows.
 
-Example execution:
+Example execution:  
+    
+    // Setup minkube and have postgresql pod running
+    $kubectl apply -f minikube/
+    $export POSTGRES_SERVICE_HOST=192.168.99.100  
+    $export POSTGRES_SERVICE_PORT=30032   
+    $make test
 
-    PGHOST=/private/tmp go test -test.bench=. -test.benchmem
 
 ## HTTP Benchmarks
 
