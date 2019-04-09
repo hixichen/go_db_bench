@@ -3,15 +3,14 @@ package main
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	gopg "github.com/go-pg/pg"
 	"github.com/jackc/go_db_bench/raw"
 	"github.com/jackc/pgx"
 	"github.com/jackc/pgx/pgtype"
-	gopg "gopkg.in/pg.v3"
 )
 
 var (
@@ -55,14 +54,15 @@ var rawSelectLargeTextStmt *raw.PreparedStatement
 var rxBuf []byte
 
 type person struct {
+	TableName  struct{} `sql:"person"` // custom table name
 	Id         int32
-	FirstName  string
-	LastName   string
-	Sex        string
-	BirthDate  time.Time
-	Weight     int32
-	Height     int32
-	UpdateTime time.Time
+	FirstName  string    `sql:"first_name"`
+	LastName   string    `sql:"last_name"`
+	Sex        string    `sql:"sex"`
+	BirthDate  time.Time `sql:"birth_date"`
+	Weight     int32     `sql:"weight"`
+	Height     int32     `sql:"height"`
+	UpdateTime time.Time `sql:"update_time"`
 }
 
 type personBytes struct {
@@ -76,43 +76,17 @@ type personBytes struct {
 	UpdateTime time.Time
 }
 
-// Implements pg.ColumnLoader.
-var _ gopg.ColumnLoader = (*person)(nil)
-
-func (p *person) LoadColumn(colIdx int, colName string, b []byte) error {
-	switch colName {
-	case "id":
-		return gopg.Decode(&p.Id, b)
-	case "first_name":
-		return gopg.Decode(&p.FirstName, b)
-	case "last_name":
-		return gopg.Decode(&p.LastName, b)
-	case "sex":
-		return gopg.Decode(&p.Sex, b)
-	case "birth_date":
-		return gopg.Decode(&p.BirthDate, b)
-	case "weight":
-		return gopg.Decode(&p.Weight, b)
-	case "height":
-		return gopg.Decode(&p.Height, b)
-	case "update_time":
-		return gopg.Decode(&p.UpdateTime, b)
-	default:
-		panic(fmt.Sprintf("unsupported column: %s", colName))
-	}
-}
-
 type People struct {
-	C []person
+	tableName struct{} `pg:",discard_unknown_columns"`
+	C         []person
 }
-
-// Implements pg.Collection.
-var _ gopg.Collection = (*People)(nil)
 
 func (people *People) NewRecord() interface{} {
 	people.C = append(people.C, person{})
 	return &people.C[len(people.C)-1]
 }
+
+var gopg_db *gopg.DB
 
 func setup(b *testing.B) {
 	setupOnce.Do(func() {
@@ -169,6 +143,8 @@ func setup(b *testing.B) {
 		if err != nil {
 			b.Fatalf("openPg failed: %v", err)
 		}
+
+		gopg_db = pg
 
 		rawConfig := raw.ConnConfig{
 			Host:     config.Host,
@@ -255,11 +231,27 @@ func BenchmarkPgSelectSingleShortString(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var firstName string
 		id := randPersonIDs[i%len(randPersonIDs)]
-		_, err := stmt.QueryOne(gopg.LoadInto(&firstName), id)
+		_, err := stmt.QueryOne(gopg.Scan(&firstName), id)
 		if err != nil {
 			b.Fatalf("stmt.QueryOne failed: %v", err)
 		}
 		if len(firstName) == 0 {
+			b.Fatal("FirstName was empty")
+		}
+	}
+}
+func BenchmarkPgModelsSelectSingleShortString(b *testing.B) {
+	setup(b)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := randPersonIDs[i%len(randPersonIDs)]
+		p := &person{}
+		err := gopg_db.Model(p).Column("first_name").Where("id = ?", id).Select()
+		if err != nil {
+			b.Fatalf("db model QueryOne failed: %v", err)
+		}
+		if len(p.FirstName) == 0 {
 			b.Fatal("FirstName was empty")
 		}
 	}
@@ -453,6 +445,20 @@ func BenchmarkPgSelectSingleRow(b *testing.B) {
 	}
 }
 
+func BenchmarkPgModelsSelectSingleRow(b *testing.B) {
+	setup(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := randPersonIDs[i%len(randPersonIDs)]
+		p := person{}
+		err := gopg_db.Model(&p).Where("id = ?", id).Select()
+		if err != nil {
+			b.Fatalf("db model QueryOne failed: %v", err)
+		}
+		checkPersonWasFilled(b, p)
+	}
+}
+
 func BenchmarkPqSelectSingleRow(b *testing.B) {
 	setup(b)
 	stmt, err := pq.Prepare(selectPersonSQL)
@@ -590,8 +596,26 @@ func BenchmarkPgSelectMultipleRowsCollect(b *testing.B) {
 			b.Fatalf("stmt.Query failed: %v", err)
 		}
 
-		for i, _ := range people.C {
+		for i := range people.C {
 			checkPersonWasFilled(b, people.C[i])
+		}
+	}
+}
+
+func BenchmarkPgModelsSelectMultipleRowsCollect(b *testing.B) {
+	setup(b)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		id := randPersonIDs[i%len(randPersonIDs)]
+
+		var persons []person
+		err := gopg_db.Model(&persons).Where("id >= ?", id).Where("id <= ?", id+24).Select()
+		if err != nil {
+			b.Fatalf("db model QueryOne failed: %v", err)
+		}
+		for i := range persons {
+			checkPersonWasFilled(b, persons[i])
 		}
 	}
 }
@@ -929,23 +953,23 @@ func benchmarkPgxStdlibSelectLargeTextString(b *testing.B, size int) {
 	benchmarkSelectLargeTextString(b, stmt, size)
 }
 
-func BenchmarkPgSelectLargeTextString1KB(b *testing.B) {
+func BenchmarkGoPgSelectLargeTextString1KB(b *testing.B) {
 	benchmarkPgSelectLargeTextString(b, 1024)
 }
 
-func BenchmarkPgSelectLargeTextString8KB(b *testing.B) {
+func BenchmarkGoPgSelectLargeTextString8KB(b *testing.B) {
 	benchmarkPgSelectLargeTextString(b, 8*1024)
 }
 
-func BenchmarkPgSelectLargeTextString64KB(b *testing.B) {
+func BenchmarkGoPgSelectLargeTextString64KB(b *testing.B) {
 	benchmarkPgSelectLargeTextString(b, 64*1024)
 }
 
-func BenchmarkPgSelectLargeTextString512KB(b *testing.B) {
+func BenchmarkGoPgSelectLargeTextString512KB(b *testing.B) {
 	benchmarkPgSelectLargeTextString(b, 512*1024)
 }
 
-func BenchmarkPgSelectLargeTextString4096KB(b *testing.B) {
+func BenchmarkGoPgSelectLargeTextString4096KB(b *testing.B) {
 	benchmarkPgSelectLargeTextString(b, 4096*1024)
 }
 
@@ -961,7 +985,7 @@ func benchmarkPgSelectLargeTextString(b *testing.B, size int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var s string
-		_, err := stmt.QueryOne(gopg.LoadInto(&s), size)
+		_, err := stmt.QueryOne(gopg.Scan(&s), size)
 		if err != nil {
 			b.Fatalf("stmt.QueryOne failed: %v", err)
 		}

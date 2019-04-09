@@ -1,6 +1,14 @@
 package main
 
-var personCreateSQL string = `
+func GetPersonCreateSQL() string {
+	return PersonCreateSQL
+}
+
+func GetPersonInsertSQL() string {
+	return PersonInsertSQL
+}
+
+var PersonCreateSQL string = `
 drop table if exists person;
 
 create table person(
@@ -16,7 +24,7 @@ create table person(
 `
 
 // erb -r ffaker -r date person.sql.erb
-var personInsertSQL string = `
+var PersonInsertSQL string = `
 insert into person(first_name, last_name, sex, birth_date, weight, height, update_time) values
 ('Hunter', 'Halvorson', 'male', '2004-06-13', 66, 61, '2006-05-24 11:32:33')
 ,('Sigrid', 'Kub', 'male', '2002-06-09', 10, 70, '2010-11-18 08:50:07')

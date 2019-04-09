@@ -7,13 +7,13 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 
+	gopg "github.com/go-pg/pg"
 	"github.com/jackc/pgx"
 	"github.com/jackc/pgx/stdlib"
 	_ "github.com/lib/pq"
-	gopg "gopkg.in/pg.v3"
 )
 
 var selectPeopleJSONSQL = `
@@ -155,16 +155,24 @@ func extractConfig() (config pgx.ConnPoolConfig, err error) {
 	}
 
 	if config.Host == "" {
-		config.Host = "localhost"
+		config.Host = os.Getenv("POSTGRES_SERVICE_HOST")
 	}
 
+	config.Port = 30032
+
 	if config.User == "" {
-		config.User = os.Getenv("USER")
+		config.User = "postgres"
+	}
+
+	if config.Password == "" {
+		config.Password = "password"
 	}
 
 	if config.Database == "" {
-		config.Database = "go_db_bench"
+		config.Database = "postgres"
 	}
+
+	fmt.Printf("database config: %+v", config)
 
 	config.TLSConfig = nil
 	config.UseFallbackTLS = false
@@ -181,12 +189,12 @@ func loadTestData(config pgx.ConnPoolConfig) error {
 	}
 	defer conn.Close()
 
-	_, err = conn.Exec(personCreateSQL)
+	_, err = conn.Exec(GetPersonCreateSQL())
 	if err != nil {
 		return err
 	}
 
-	_, err = conn.Exec(personInsertSQL)
+	_, err = conn.Exec(PersonInsertSQL)
 	if err != nil {
 		return err
 	}
@@ -212,6 +220,7 @@ func openPgxStdlib(config pgx.ConnConfig) (*sql.DB, error) {
 func openPq(config pgx.ConnPoolConfig) (*sql.DB, error) {
 	var options []string
 	options = append(options, fmt.Sprintf("host=%s", config.Host))
+	options = append(options, fmt.Sprintf("port=%d", config.Port))
 	options = append(options, fmt.Sprintf("user=%s", config.User))
 	options = append(options, fmt.Sprintf("dbname=%s", config.Database))
 	options = append(options, "sslmode=disable")
@@ -223,20 +232,11 @@ func openPq(config pgx.ConnPoolConfig) (*sql.DB, error) {
 }
 
 func openPg(config pgx.ConnPoolConfig) (*gopg.DB, error) {
-	var options gopg.Options
-
-	options.Host = config.Host
-	_, err := os.Stat(options.Host)
-	if err == nil {
-		options.Network = "unix"
-		if !strings.Contains(options.Host, "/.s.PGSQL.") {
-			options.Host = filepath.Join(options.Host, ".s.PGSQL.5432")
-		}
+	option := &gopg.Options{
+		Addr:     config.Host + ":" + strconv.Itoa(int(config.Port)),
+		User:     config.User,
+		Database: config.Database,
+		Password: config.Password,
 	}
-
-	options.User = config.User
-	options.Database = config.Database
-	options.Password = config.Password
-
-	return gopg.Connect(&options), nil
+	return gopg.Connect(option), nil
 }
